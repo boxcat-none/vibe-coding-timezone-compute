@@ -23,6 +23,14 @@ npm run build    # 輸出到 dist/
 npm run preview  # 預覽 build 結果
 ```
 
+## 部署
+
+推送到 `main` 後，GitHub Actions（`.github/workflows/deploy.yml`）會自動建置並部署到 GitHub Pages：
+
+<https://boxcat-none.github.io/vibe-coding-timezone-compute/>
+
+第一次使用前，需要到 repo 的 **Settings → Pages → Build and deployment → Source** 選擇 **GitHub Actions**。
+
 ## 專案結構
 
 ```
