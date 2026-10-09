@@ -44,6 +44,8 @@ interface Place {
   lon: number;
   /** 是常用城市清單裡的城市（名稱有各語言翻譯） */
   preset: boolean;
+  /** 顯示名稱用的時區（定位到的所在地：時間用瀏覽器時區，名稱用最近的城市） */
+  nameTz?: string;
 }
 
 function placeOfZone(tz: string): Place {
@@ -53,7 +55,8 @@ function placeOfZone(tz: string): Place {
 }
 
 function placeName(p: Place): string {
-  return (p.preset && findCity(p.tz)?.name[state.lang]) || zoneCity(p.tz);
+  const tz = p.nameTz ?? p.tz;
+  return (p.preset && findCity(tz)?.name[state.lang]) || zoneCity(tz);
 }
 
 /** 兩點的大圓距離（公里） */
@@ -85,6 +88,30 @@ function placeAt(lat: number, lon: number): Place {
   const h = Math.round(lon / 15);
   // Etc/GMT 的正負號與一般習慣相反
   return { tz: h === 0 ? 'Etc/GMT' : `Etc/GMT${h > 0 ? '-' : '+'}${Math.abs(h)}`, lat, lon, preset: false };
+}
+
+/** 使用者的所在地：先用瀏覽器時區推估，取得定位後換成實際位置 */
+let homePlace: Place = placeOfZone(localZone);
+
+/** 用瀏覽器定位取得實際所在地（時區推估只能精確到時區的代表城市，有些時區甚至沒有城市） */
+function locateHome() {
+  if (!('geolocation' in navigator)) return;
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const { latitude: lat, longitude: lon } = pos.coords;
+      const near = placeAt(lat, lon);
+      // 時間仍用瀏覽器的時區，名稱用離定位最近的城市
+      homePlace = { tz: localZone, lat, lon, preset: !!findCity(near.tz), nameTz: near.tz };
+      globe.setHome(homePlace);
+      // 還沒鎖定任何地點時，讓地球轉到所在地
+      if (!state.targets.length && !collapsed) globe.focus([homePlace]);
+      render();
+    },
+    () => {
+      /* 使用者拒絕或無法定位：維持用時區推估 */
+    },
+    { enableHighAccuracy: false, timeout: 15000, maximumAge: 3600000 },
+  );
 }
 
 const samePlace = (a: Place | undefined, b: Place | undefined) =>
@@ -123,7 +150,7 @@ function setTarget(slot: number, place: Place) {
     if (samePlace(t[1], place)) t.length = 1;
   } else {
     // 還沒有第一個目標時，用所在地當作比較的基準
-    if (!t[0]) t[0] = placeOfZone(localZone);
+    if (!t[0]) t[0] = homePlace;
     if (samePlace(t[0], place)) return;
     t[1] = place;
   }
@@ -278,7 +305,7 @@ const slotIds = ['a', 'b'] as const;
 
 /** 第 i 個欄位顯示的時區；左邊沒有鎖定時顯示所在地 */
 function slotPlace(i: number): Place | null {
-  return state.targets[i] ?? (i === 0 ? placeOfZone(localZone) : null);
+  return state.targets[i] ?? (i === 0 ? homePlace : null);
 }
 
 function render() {
@@ -380,7 +407,7 @@ function openMenu(slot: number, anchor: HTMLElement) {
 
   const now = new Date();
   const options = [
-    { tz: localZone, name: placeName(placeOfZone(localZone)), home: true },
+    { tz: localZone, name: placeName(homePlace), home: true },
     ...CITIES.filter((c) => c.tz !== localZone).map((c) => ({ tz: c.tz, name: c.name[state.lang], home: false })),
   ];
   const grid = $('city-grid');
@@ -390,6 +417,7 @@ function openMenu(slot: number, anchor: HTMLElement) {
       btn.type = 'button';
       btn.className = 'cm-city';
       btn.dataset.tz = o.tz;
+      if (o.home) btn.dataset.home = '1';
       if (o.tz === current) btn.setAttribute('aria-current', 'true');
       // 另一邊已經鎖定的城市不能重複選
       if (slot === 1 && o.tz === (state.targets[0]?.tz ?? localZone)) btn.disabled = true;
@@ -439,7 +467,7 @@ $('city-grid').addEventListener('click', (e) => {
   const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.cm-city');
   if (!btn || btn.disabled) return;
   closeMenu();
-  setTarget(menuSlot, placeOfZone(btn.dataset.tz!));
+  setTarget(menuSlot, btn.dataset.home ? homePlace : placeOfZone(btn.dataset.tz!));
 });
 
 $('city-more').addEventListener('click', () => {
@@ -574,9 +602,9 @@ window.addEventListener('resize', () => {
 });
 
 // ---------- 啟動 ----------
-const home = placeOfZone(localZone);
-globe.faceLongitude(home.lon);
-globe.setHome(home);
+globe.faceLongitude(homePlace.lon);
+globe.setHome(homePlace);
+locateHome();
 applyLang();
 updateStage();
 new ResizeObserver(updateStage).observe(banner);
